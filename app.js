@@ -1,4 +1,5 @@
-/* Routine PWA – mit IndexedDB (Bilder als Blobs), Kind-Modus, Auto-Reset täglich, Sternenschauer */
+/* Routine PWA – IndexedDB (Bilder als Blobs), Kind-Modus, Auto-Reset täglich, Sternenschauer
+   + Export/Import als Datei (.json) inkl. Bilder (Base64 DataURLs) */
 
 const ROUTINES = [
   { id: "MORNING", icon: "🌞", defaultTitle: "Morgen" },
@@ -16,6 +17,8 @@ const editBtn = $("editBtn");
 const resetBtn = $("resetBtn");
 const saveBtn = $("saveBtn");
 const addBtn  = $("addBtn");
+const exportBtn = $("exportBtn");
+const importBtn = $("importBtn");
 const titleEl = $("title");
 
 const sparkles = $("sparkles");
@@ -56,14 +59,26 @@ function kvSet(key, val) {
     r.onerror = () => reject(r.error);
   });
 }
+function kvClear() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("kv", "readwrite");
+    const st = tx.objectStore("kv");
+    const r = st.clear();
+    r.onsuccess = () => resolve(true);
+    r.onerror = () => reject(r.error);
+  });
+}
 
 function imgPut(blob) {
   const id = crypto.randomUUID();
+  return imgPutWithId(id, blob).then(() => id);
+}
+function imgPutWithId(id, blob) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction("images", "readwrite");
     const st = tx.objectStore("images");
     const r = st.put(blob, id);
-    r.onsuccess = () => resolve(id);
+    r.onsuccess = () => resolve(true);
     r.onerror = () => reject(r.error);
   });
 }
@@ -83,6 +98,36 @@ function imgDel(id) {
     const r = st.delete(id);
     r.onsuccess = () => resolve(true);
     r.onerror = () => reject(r.error);
+  });
+}
+function imgClear() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("images", "readwrite");
+    const st = tx.objectStore("images");
+    const r = st.clear();
+    r.onsuccess = () => resolve(true);
+    r.onerror = () => reject(r.error);
+  });
+}
+function imgKeys() {
+  // getAllKeys ist breit unterstützt; fallback per cursor
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("images", "readonly");
+    const st = tx.objectStore("images");
+    if (st.getAllKeys) {
+      const r = st.getAllKeys();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    } else {
+      const keys = [];
+      const cursorReq = st.openCursor();
+      cursorReq.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) { keys.push(cursor.key); cursor.continue(); }
+        else resolve(keys);
+      };
+      cursorReq.onerror = () => reject(cursorReq.error);
+    }
   });
 }
 
@@ -157,13 +202,15 @@ async function saveStore() {
 let view = "pick"; // pick | routine | edit
 let currentRid = null;
 
-function setHeader({ title, showBack, showEdit, showReset, showSave, showAdd }) {
+function setHeader({ title, showBack, showEdit, showReset, showSave, showAdd, showExport, showImport }) {
   titleEl.textContent = title;
   backBtn.style.display = showBack ? "" : "none";
   editBtn.style.display = showEdit ? "" : "none";
   resetBtn.style.display = showReset ? "" : "none";
   saveBtn.style.display = showSave ? "" : "none";
   addBtn.style.display  = showAdd  ? "" : "none";
+  exportBtn.style.display = showExport ? "" : "none";
+  importBtn.style.display = showImport ? "" : "none";
 }
 
 // ---------- Sparkles ----------
@@ -210,10 +257,116 @@ async function imageUrlFromId(imageId) {
   return URL.createObjectURL(blob);
 }
 
+// ---------- Export / Import ----------
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+function dataURLToBlob(dataURL) {
+  const [meta, base64] = dataURL.split(",");
+  const mime = (meta.match(/data:(.*?);base64/) || [])[1] || "application/octet-stream";
+  const bin = atob(base64);
+  const len = bin.length;
+  const u8 = new Uint8Array(len);
+  for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime });
+}
+
+async function exportBackup() {
+  // alle Bilder aus images-Store einsammeln
+  const keys = await imgKeys();
+  const images = {};
+  for (const k of keys) {
+    const blob = await imgGet(k);
+    if (!blob) continue;
+    images[k] = await blobToDataURL(blob);
+  }
+
+  const payload = {
+    format: "routinepwa-backup",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    store,
+    images
+  };
+
+  const json = JSON.stringify(payload);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().replaceAll(":","-").slice(0,19);
+  a.href = url;
+  a.download = `routine-backup-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function pickJSONFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+async function importBackupFlow() {
+  const file = await pickJSONFile();
+  if (!file) return;
+
+  const text = await file.text();
+  let payload;
+  try { payload = JSON.parse(text); }
+  catch { alert("Import fehlgeschlagen: Datei ist kein gültiges JSON."); return; }
+
+  if (!payload || payload.format !== "routinepwa-backup" || payload.version !== 1) {
+    alert("Import fehlgeschlagen: Das sieht nicht nach einem Routine-PWA-Backup aus.");
+    return;
+  }
+
+  // Sicherheitsabfrage (überschreibt alles)
+  const ok = confirm("Import überschreibt ALLE aktuellen Routinen & Bilder auf diesem Gerät. Fortfahren?");
+  if (!ok) return;
+
+  // Stores leeren
+  await kvClear();
+  await imgClear();
+
+  // Bilder zurückschreiben (mit denselben IDs)
+  const images = payload.images || {};
+  const ids = Object.keys(images);
+  for (const id of ids) {
+    const dataURL = images[id];
+    if (typeof dataURL !== "string" || !dataURL.startsWith("data:")) continue;
+    const blob = dataURLToBlob(dataURL);
+    await imgPutWithId(id, blob);
+  }
+
+  // Store setzen
+  store = payload.store || defaultStore();
+  await saveStore();
+
+  alert("Import fertig ✅");
+  await renderPick();
+}
+
 // ---------- Views ----------
 async function renderPick() {
   view = "pick"; currentRid = null;
-  setHeader({ title: "Routine auswählen", showBack:false, showEdit:false, showReset:false, showSave:false, showAdd:false });
+  setHeader({
+    title: "Routine auswählen",
+    showBack:false, showEdit:false, showReset:false, showSave:false, showAdd:false,
+    showExport:true, showImport:true
+  });
 
   app.innerHTML = `
     <div class="grid" id="grid"></div>
@@ -239,19 +392,15 @@ async function renderPick() {
       </div>
     `;
 
-    // Start button
     tile.querySelector(".primary").addEventListener("click", () => {
       currentRid = r.id; renderRoutine();
     });
 
-    // Edit button (hidden behavior when kid-mode: still allow long-press)
     tile.querySelectorAll(".btn")[1].addEventListener("click", () => {
       if (!kid) { currentRid = r.id; renderEdit(); }
     });
 
-    // Long press always opens edit
     attachLongPress(tile, () => { currentRid = r.id; renderEdit(); });
-
     grid.appendChild(tile);
   }
 }
@@ -272,7 +421,9 @@ async function renderRoutine() {
     showEdit: !kid,
     showReset: !kid,
     showSave: false,
-    showAdd: false
+    showAdd: false,
+    showExport: false,
+    showImport: false
   });
 
   const done = new Set(r.progress.doneIds || []);
@@ -315,7 +466,6 @@ async function renderRoutine() {
         await saveStore();
         await rerenderProgress();
       } else {
-        // (1) Kind-Modus: kein Undo
         if (!kid) {
           done.delete(item.id);
           card.classList.remove("done");
@@ -345,7 +495,9 @@ async function renderEdit() {
     showEdit: false,
     showReset: false,
     showSave: true,
-    showAdd: true
+    showAdd: true,
+    showExport: true,
+    showImport: true
   });
 
   app.innerHTML = `
@@ -424,7 +576,6 @@ async function renderEdit() {
         const file = await pickImageFile();
         if (!file) return;
 
-        // optional: altes Bild löschen
         if (item.imageId) await imgDel(item.imageId);
 
         const id = await imgPut(file);
@@ -461,7 +612,6 @@ async function renderEdit() {
       btnRemove.addEventListener("click", async () => {
         if (item.imageId) await imgDel(item.imageId);
         r.items = r.items.filter(x => x.id !== item.id);
-        // Fortschritt säubern
         r.progress.doneIds = (r.progress.doneIds || []).filter(id => id !== item.id);
         await saveStore();
         await drawItems();
@@ -473,7 +623,6 @@ async function renderEdit() {
 
   await drawItems();
 
-  // Header buttons wiring
   saveBtn.onclick = async () => {
     r.title = rtTitle.value.trim() || meta.defaultTitle;
     r.kidMode = !!kidMode.checked;
@@ -490,7 +639,7 @@ async function renderEdit() {
   };
 }
 
-// ---------- UI Events ----------
+// ---------- Header Buttons wiring ----------
 backBtn.onclick = () => {
   if (view === "routine") renderPick();
   else if (view === "edit") renderPick();
@@ -502,63 +651,4 @@ editBtn.onclick = () => {
 
 resetBtn.onclick = async () => {
   if (view !== "routine") return;
-  const r = store.routines[currentRid];
-  r.progress = { lastDateIso: todayISO(), doneIds: [] };
-  await saveStore();
-  await renderRoutine();
-};
-
-// ---------- File picking ----------
-function pickImageFile() {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = () => resolve(input.files?.[0] || null);
-    input.click();
-  });
-}
-
-// ---------- Long press ----------
-function attachLongPress(el, onLongPress) {
-  let t = null;
-  const ms = 520;
-
-  const start = () => {
-    clearTimeout(t);
-    t = setTimeout(() => { t = null; onLongPress(); }, ms);
-  };
-  const cancel = () => { clearTimeout(t); t = null; };
-
-  el.addEventListener("touchstart", start, { passive:true });
-  el.addEventListener("touchend", cancel);
-  el.addEventListener("touchmove", cancel);
-  el.addEventListener("mousedown", start);
-  el.addEventListener("mouseup", cancel);
-  el.addEventListener("mouseleave", cancel);
-}
-
-// ---------- Sanitizers ----------
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
-
-// ---------- Boot ----------
-(async function boot(){
-  db = await openDB();
-  store = await loadStore();
-
-  // Beim Start pro Routine ggf. Auto-Reset anstoßen
-  let changed = false;
-  for (const rid of Object.keys(store.routines)) {
-    const r = store.routines[rid];
-    if (applyAutoReset(r)) changed = true;
-  }
-  if (changed) await saveStore();
-
-  await renderPick();
-})();
+  const r = store.routines
