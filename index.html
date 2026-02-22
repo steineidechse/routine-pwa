@@ -19,9 +19,9 @@
       position:sticky; top:0; z-index:10;
       background:rgba(250,250,250,.92); backdrop-filter: blur(10px);
       border-bottom:1px solid var(--line);
-      padding:12px 14px; display:flex; align-items:center; gap:10px;
+      padding:12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
     }
-    header h1{ font-size:18px; margin:0; flex:1; }
+    header h1{ font-size:18px; margin:0; flex:1; min-width:160px; }
     .btn{ border:1px solid var(--line); background:#fff; padding:10px 12px; border-radius:14px; font-weight:600; }
     .btn.primary{ background:#111; color:#fff; border-color:#111; }
     .btn:disabled{ opacity:.5; }
@@ -116,6 +116,10 @@
   <header>
     <button id="backBtn" class="btn" style="display:none;">←</button>
     <h1 id="title">Routine auswählen</h1>
+
+    <button id="exportBtn" class="btn" style="display:none;">Export</button>
+    <button id="importBtn" class="btn" style="display:none;">Import</button>
+
     <button id="editBtn" class="btn" style="display:none;">Bearbeiten</button>
     <button id="resetBtn" class="btn" style="display:none;">Reset</button>
     <button id="saveBtn" class="btn primary" style="display:none;">Speichern</button>
