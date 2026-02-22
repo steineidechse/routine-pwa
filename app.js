@@ -651,4 +651,271 @@ async function renderRoutine() {
       } else {
         if (!kid) {
           done.delete(item.id);
-          card.classList.remove("d
+          card.classList.remove("done");
+          card.querySelector(".d").textContent = "Antippen zum Bestätigen";
+          card.querySelector(".check").textContent = "";
+          r.progress = { lastDateIso: todayISO(), doneIds: [...done] };
+          await saveStore();
+          await rerenderProgress();
+        }
+      }
+    });
+
+    list.appendChild(card);
+  }
+
+  await rerenderProgress();
+  // in case user imported a completed routine
+  await maybeReward();
+}
+
+async function renderEdit() {
+  view = "edit";
+  const r = store.routines[currentRid];
+  const meta = routineMeta(currentRid);
+
+  setHeader({
+    title: `Bearbeiten: ${r.title || meta.defaultTitle}`,
+    showBack: true,
+    showEdit: false,
+    showReset: false,
+    showSave: true,
+    showAdd: true,
+    showExport: true,
+    showImport: true
+  });
+
+  app.innerHTML = `
+    <div class="panel">
+      <label>Routine-Titel</label>
+      <input id="rtTitle" type="text" value="${escapeAttr(r.title || meta.defaultTitle)}" />
+
+      <div class="switchrow">
+        <div>
+          <div style="font-weight:800;">Kind-Modus</div>
+          <div class="hint">Im Routine-Screen kein Zurück/Undo/Edit/Reset. Editor per Long-Press auf die Kachel.</div>
+        </div>
+        <input id="kidMode" type="checkbox" ${r.kidMode ? "checked" : ""} />
+      </div>
+
+      <div class="switchrow">
+        <div>
+          <div style="font-weight:800;">Auto-Reset täglich</div>
+          <div class="hint">Löscht Haken am neuen Tag automatisch (pro Routine).</div>
+        </div>
+        <input id="autoReset" type="checkbox" ${r.autoResetDaily ? "checked" : ""} />
+      </div>
+
+      <div class="switchrow">
+        <div>
+          <div style="font-weight:800;">Belohnungs-Screen</div>
+          <div class="hint">Zeigt eine Belohnung, wenn alle Aufgaben erledigt sind.</div>
+        </div>
+        <input id="rewardEnabled" type="checkbox" ${r.rewardEnabled ? "checked" : ""} />
+      </div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:900;margin-bottom:8px;">Items</div>
+      <div class="list" id="editList"></div>
+    </div>
+  `;
+
+  const editList = $("editList");
+  const rtTitle = $("rtTitle");
+  const kidMode = $("kidMode");
+  const autoReset = $("autoReset");
+  const rewardEnabled = $("rewardEnabled");
+
+  async function drawItems() {
+    editList.innerHTML = "";
+    for (const item of r.items) {
+      const wrap = document.createElement("div");
+      wrap.className = "itemedit";
+
+      const imgUrl = await imageUrlFromId(item.imageId);
+
+      wrap.innerHTML = `
+        <div class="top">
+          <div class="miniimg">${imgUrl ? `<img alt="" />` : `<span style="font-size:22px;">🖼️</span>`}</div>
+          <div style="flex:1;">
+            <label>Titel</label>
+            <input type="text" value="${escapeAttr(item.title)}" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <div class="left">
+            <button class="btn">Bild wählen</button>
+            <button class="btn">Bild löschen</button>
+            <button class="btn">↑</button>
+            <button class="btn">↓</button>
+          </div>
+          <button class="btn danger">Entfernen</button>
+        </div>
+      `;
+
+      if (imgUrl) wrap.querySelector("img").src = imgUrl;
+
+      const titleInput = wrap.querySelector('input[type="text"]');
+      titleInput.addEventListener("input", () => {
+        item.title = titleInput.value;
+      });
+
+      const btnChoose = wrap.querySelectorAll(".btn")[0];
+      const btnDelImg = wrap.querySelectorAll(".btn")[1];
+      const btnUp = wrap.querySelectorAll(".btn")[2];
+      const btnDown = wrap.querySelectorAll(".btn")[3];
+      const btnRemove = wrap.querySelector(".danger");
+
+      btnChoose.addEventListener("click", async () => {
+        const file = await pickImageFile();
+        if (!file) return;
+
+        if (item.imageId) await imgDel(item.imageId);
+
+        const id = await imgPut(file);
+        item.imageId = id;
+        await saveStore();
+        await drawItems();
+      });
+
+      btnDelImg.addEventListener("click", async () => {
+        if (item.imageId) await imgDel(item.imageId);
+        item.imageId = null;
+        await saveStore();
+        await drawItems();
+      });
+
+      btnUp.addEventListener("click", async () => {
+        const idx = r.items.findIndex(x => x.id === item.id);
+        if (idx > 0) {
+          [r.items[idx - 1], r.items[idx]] = [r.items[idx], r.items[idx - 1]];
+          await saveStore();
+          await drawItems();
+        }
+      });
+
+      btnDown.addEventListener("click", async () => {
+        const idx = r.items.findIndex(x => x.id === item.id);
+        if (idx >= 0 && idx < r.items.length - 1) {
+          [r.items[idx + 1], r.items[idx]] = [r.items[idx], r.items[idx + 1]];
+          await saveStore();
+          await drawItems();
+        }
+      });
+
+      btnRemove.addEventListener("click", async () => {
+        if (item.imageId) await imgDel(item.imageId);
+        r.items = r.items.filter(x => x.id !== item.id);
+        r.progress.doneIds = (r.progress.doneIds || []).filter(id => id !== item.id);
+        await saveStore();
+        await drawItems();
+      });
+
+      editList.appendChild(wrap);
+    }
+  }
+
+  await drawItems();
+
+  saveBtn.onclick = async () => {
+    r.title = rtTitle.value.trim() || meta.defaultTitle;
+    r.kidMode = !!kidMode.checked;
+    r.autoResetDaily = !!autoReset.checked;
+    r.rewardEnabled = !!rewardEnabled.checked;
+    await saveStore();
+    await renderPick();
+  };
+
+  addBtn.onclick = async () => {
+    const id = crypto.randomUUID();
+    r.items.push({ id, title: "Neu", imageId: null });
+    await saveStore();
+    await drawItems();
+  };
+}
+
+// ---------- Header Buttons wiring ----------
+backBtn.onclick = () => {
+  if (view === "routine") renderPick();
+  else if (view === "edit") renderPick();
+};
+
+editBtn.onclick = () => {
+  if (view === "routine") renderEdit();
+};
+
+resetBtn.onclick = async () => {
+  if (view !== "routine") return;
+  const r = store.routines[currentRid];
+  r.progress = { lastDateIso: todayISO(), doneIds: [] };
+  await saveStore();
+  await renderRoutine();
+};
+
+exportBtn.onclick = async () => {
+  try { await exportBackup(); }
+  catch (e) { console.error(e); alert("Export fehlgeschlagen."); }
+};
+
+importBtn.onclick = async () => {
+  try { await importBackupFlow(); }
+  catch (e) { console.error(e); alert("Import fehlgeschlagen."); }
+};
+
+// ---------- File picking ----------
+function pickImageFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+// ---------- Long press ----------
+function attachLongPress(el, onLongPress) {
+  let t = null;
+  const ms = 520;
+
+  const start = () => {
+    clearTimeout(t);
+    t = setTimeout(() => { t = null; onLongPress(); }, ms);
+  };
+  const cancel = () => { clearTimeout(t); t = null; };
+
+  el.addEventListener("touchstart", start, { passive:true });
+  el.addEventListener("touchend", cancel);
+  el.addEventListener("touchmove", cancel);
+  el.addEventListener("mousedown", start);
+  el.addEventListener("mouseup", cancel);
+  el.addEventListener("mouseleave", cancel);
+}
+
+// ---------- Sanitizers ----------
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;")
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
+
+// ---------- Boot ----------
+(async function boot(){
+  injectRewardStyles();
+
+  db = await openDB();
+  store = await loadStore();
+
+  let changed = false;
+  for (const rid of Object.keys(store.routines)) {
+    const r = store.routines[rid];
+    if (applyAutoReset(r)) changed = true;
+  }
+  if (changed) await saveStore();
+
+  await renderPick();
+})();
