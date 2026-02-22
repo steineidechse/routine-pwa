@@ -1,30 +1,77 @@
-const CACHE = "routinepwa-v1";
+// sw.js — komplett ersetzen
+// Cache-Version hier hochzählen, wenn du neue Deploys machst:
+const CACHE = "routinepwa-v2";
+
 const ASSETS = [
   "./",
   "./index.html",
   "./app.js",
-  "./manifest.webmanifest"
+  "./manifest.webmanifest",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
+  );
   self.skipWaiting();
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(self.clients.claim());
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    // Alte Caches löschen
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.map((key) => (key !== CACHE ? caches.delete(key) : null))
+    );
+    await self.clients.claim();
+  })());
 });
 
-self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  e.respondWith(
-    caches.match(req).then(res => res || fetch(req).then(net => {
-      // optional runtime cache for same-origin GET
-      if (req.method === "GET" && new URL(req.url).origin === location.origin) {
-        const copy = net.clone();
-        caches.open(CACHE).then(c => c.put(req, copy));
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // Nur GET-Anfragen cachen
+  if (req.method !== "GET") return;
+
+  // Für Navigation (Seitenaufrufe) immer index.html als Fallback (Offline)
+  if (req.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req);
+        const cache = await caches.open(CACHE);
+        cache.put(req, fresh.clone());
+        return fresh;
+      } catch {
+        return (await caches.match("./index.html")) || Response.error();
       }
-      return net;
-    }).catch(() => caches.match("./index.html")))
-  );
+    })());
+    return;
+  }
+
+  // Statisch: Cache-first, dann Network, dann fallback
+  event.respondWith((async () => {
+    const cached = await caches.match(req);
+    if (cached) return cached;
+
+    try {
+      const fresh = await fetch(req);
+
+      // Nur same-origin Antworten in den Cache
+      if (url.origin === location.origin) {
+        const cache = await caches.open(CACHE);
+        cache.put(req, fresh.clone());
+      }
+      return fresh;
+    } catch {
+      // Optionales Fallback für Assets
+      if (req.destination === "document") {
+        return (await caches.match("./index.html")) || Response.error();
+      }
+      return Response.error();
+    }
+  })());
 });
+```0
