@@ -1,5 +1,6 @@
 /* Routine PWA – IndexedDB (Bilder als Blobs), Kind-Modus, Auto-Reset täglich, Sternenschauer
-   + Export/Import als Datei (.json) inkl. Bilder (Base64 DataURLs) */
+   + Export/Import als Datei (.json) inkl. Bilder (Base64 DataURLs)
+   + Belohnungs-Screen wenn Routine komplett */
 
 const ROUTINES = [
   { id: "MORNING", icon: "🌞", defaultTitle: "Morgen" },
@@ -22,6 +23,72 @@ const importBtn = $("importBtn");
 const titleEl = $("title");
 
 const sparkles = $("sparkles");
+
+// ---------- Small CSS injection (so we don't need index.html changes) ----------
+function injectRewardStyles() {
+  const css = `
+  .rewardOverlay{
+    position:fixed; inset:0; z-index:2000;
+    background: rgba(0,0,0,.55);
+    display:flex; align-items:center; justify-content:center;
+    padding:18px;
+  }
+  .rewardCard{
+    width:min(560px, 100%);
+    border-radius:22px;
+    background:#fff;
+    border:1px solid rgba(0,0,0,.08);
+    box-shadow: 0 18px 50px rgba(0,0,0,.22);
+    padding:18px;
+    text-align:center;
+  }
+  .rewardTitle{
+    font-size:22px; font-weight:900; margin:8px 0 6px 0;
+  }
+  .rewardSub{
+    font-size:14px; opacity:.75; margin:0 0 14px 0;
+  }
+  .rewardBig{
+    font-size:56px; line-height:1; margin:8px 0 12px 0;
+  }
+  .rewardBtns{
+    display:flex; gap:10px; justify-content:center; flex-wrap:wrap;
+    margin-top:10px;
+  }
+  .rewardBtn{
+    border:1px solid #e6e6e6;
+    background:#fff;
+    padding:10px 14px;
+    border-radius:14px;
+    font-weight:800;
+  }
+  .rewardBtn.primary{
+    background:#111; color:#fff; border-color:#111;
+  }
+  .confetti{
+    position:fixed; inset:0; pointer-events:none; z-index:2100;
+  }
+  .conf{
+    position:absolute; width:10px; height:10px; opacity:0;
+    transform: translate(-50%,-50%);
+    animation: confPop 950ms ease-out forwards;
+  }
+  .conf::before{
+    content:"✦";
+    font-size:18px;
+    display:block;
+    filter: drop-shadow(0 6px 14px rgba(0,0,0,.18));
+  }
+  @keyframes confPop{
+    0%{ opacity:0; transform: translate(-50%,-50%) scale(.7); }
+    10%{ opacity:1; }
+    100%{ opacity:0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(25deg) scale(1.4); }
+  }
+  `;
+  const el = document.createElement("style");
+  el.textContent = css;
+  document.head.appendChild(el);
+}
 
 // ---------- IndexedDB ----------
 const DB_NAME = "routinepwa";
@@ -141,6 +208,7 @@ function defaultStore() {
         title: "Morgen",
         kidMode: false,
         autoResetDaily: true,
+        rewardEnabled: true, // NEW (optional)
         progress: { lastDateIso: null, doneIds: [] },
         items: [
           { id: "wake", title: "Aufstehen", imageId: null },
@@ -157,6 +225,7 @@ function defaultStore() {
         title: "Abend",
         kidMode: false,
         autoResetDaily: true,
+        rewardEnabled: true, // NEW (optional)
         progress: { lastDateIso: null, doneIds: [] },
         items: [
           { id: "dinner", title: "Abendessen", imageId: null },
@@ -173,6 +242,7 @@ function defaultStore() {
         title: "Wochenende",
         kidMode: false,
         autoResetDaily: true,
+        rewardEnabled: true, // NEW (optional)
         progress: { lastDateIso: null, doneIds: [] },
         items: [
           { id: "slowbreak", title: "Langsam frühstücken", imageId: null },
@@ -187,11 +257,41 @@ function defaultStore() {
   };
 }
 
+// Migration: makes older stores/backups compatible (fills missing fields)
+function migrateStore(s) {
+  if (!s || typeof s !== "object") return defaultStore();
+  if (!s.routines || typeof s.routines !== "object") return defaultStore();
+
+  for (const rid of Object.keys(s.routines)) {
+    const r = s.routines[rid];
+    if (!r || typeof r !== "object") continue;
+
+    if (typeof r.kidMode !== "boolean") r.kidMode = false;
+    if (typeof r.autoResetDaily !== "boolean") r.autoResetDaily = true;
+
+    // NEW optional field
+    if (typeof r.rewardEnabled !== "boolean") r.rewardEnabled = true;
+
+    if (!r.progress || typeof r.progress !== "object") r.progress = { lastDateIso: null, doneIds: [] };
+    if (!Array.isArray(r.progress.doneIds)) r.progress.doneIds = [];
+    if (typeof r.progress.lastDateIso !== "string" && r.progress.lastDateIso !== null) r.progress.lastDateIso = null;
+
+    if (!Array.isArray(r.items)) r.items = [];
+    for (const it of r.items) {
+      if (!it || typeof it !== "object") continue;
+      if (typeof it.id !== "string") it.id = crypto.randomUUID();
+      if (typeof it.title !== "string") it.title = "Item";
+      if (typeof it.imageId !== "string") it.imageId = null;
+    }
+  }
+  return s;
+}
+
 let store;
 async function loadStore() {
   const raw = await kvGet(STORE_KEY);
   if (!raw) return defaultStore();
-  try { return JSON.parse(raw); } catch { return defaultStore(); }
+  try { return migrateStore(JSON.parse(raw)); } catch { return defaultStore(); }
 }
 async function saveStore() {
   await kvSet(STORE_KEY, JSON.stringify(store));
@@ -214,6 +314,7 @@ function setHeader({ title, showBack, showEdit, showReset, showSave, showAdd, sh
 
 // ---------- Sparkles ----------
 function triggerSparkles() {
+  if (!sparkles) return;
   sparkles.innerHTML = "";
   sparkles.style.display = "block";
   const n = 48;
@@ -232,6 +333,75 @@ function triggerSparkles() {
     sparkles.appendChild(el);
   }
   setTimeout(() => { sparkles.style.display = "none"; }, 680);
+}
+
+// ---------- Reward Screen ----------
+function confettiBurst() {
+  const layer = document.createElement("div");
+  layer.className = "confetti";
+  document.body.appendChild(layer);
+
+  const n = 80;
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 3;
+
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement("div");
+    el.className = "conf";
+    const dx = (Math.random() - 0.5) * 560;
+    const dy = (Math.random() - 0.5) * 760;
+    el.style.left = `${cx + (Math.random()-0.5)*120}px`;
+    el.style.top  = `${cy + (Math.random()-0.5)*120}px`;
+    el.style.setProperty("--dx", `${dx}px`);
+    el.style.setProperty("--dy", `${dy}px`);
+    layer.appendChild(el);
+  }
+
+  setTimeout(() => layer.remove(), 1100);
+}
+
+function showRewardScreen({ title, onAgain, onHome }) {
+  // avoid duplicate overlays
+  const existing = document.getElementById("rewardOverlay");
+  if (existing) existing.remove();
+
+  confettiBurst();
+
+  const overlay = document.createElement("div");
+  overlay.className = "rewardOverlay";
+  overlay.id = "rewardOverlay";
+
+  overlay.innerHTML = `
+    <div class="rewardCard" role="dialog" aria-modal="true">
+      <div class="rewardBig">🏆</div>
+      <div class="rewardTitle">Alles geschafft!</div>
+      <p class="rewardSub">${escapeHtml(title)} ist komplett erledigt.</p>
+      <div class="rewardBtns">
+        <button class="rewardBtn primary" id="rewardAgain">Nochmal</button>
+        <button class="rewardBtn" id="rewardHome">Zur Auswahl</button>
+      </div>
+    </div>
+  `;
+
+  // click outside closes -> go home
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+      onHome?.();
+    }
+  });
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelector("#rewardAgain").addEventListener("click", () => {
+    overlay.remove();
+    onAgain?.();
+  });
+
+  overlay.querySelector("#rewardHome").addEventListener("click", () => {
+    overlay.remove();
+    onHome?.();
+  });
 }
 
 // ---------- Helpers ----------
@@ -346,7 +516,7 @@ async function importBackupFlow() {
     await imgPutWithId(id, blob);
   }
 
-  store = payload.store || defaultStore();
+  store = migrateStore(payload.store || defaultStore());
   await saveStore();
 
   alert("Import fertig ✅");
@@ -431,6 +601,24 @@ async function renderRoutine() {
     prog.textContent = `Fortschritt: ${done.size}/${items.length}`;
   }
 
+  async function maybeReward() {
+    if (!r.rewardEnabled) return;
+    if (items.length > 0 && done.size === items.length) {
+      showRewardScreen({
+        title: r.title || meta.defaultTitle,
+        onAgain: async () => {
+          // reset progress
+          r.progress = { lastDateIso: todayISO(), doneIds: [] };
+          await saveStore();
+          await renderRoutine();
+        },
+        onHome: async () => {
+          await renderPick();
+        }
+      });
+    }
+  }
+
   for (const item of items) {
     const card = document.createElement("div");
     card.className = "card";
@@ -459,258 +647,8 @@ async function renderRoutine() {
         r.progress = { lastDateIso: todayISO(), doneIds: [...done] };
         await saveStore();
         await rerenderProgress();
+        await maybeReward();
       } else {
         if (!kid) {
           done.delete(item.id);
-          card.classList.remove("done");
-          card.querySelector(".d").textContent = "Antippen zum Bestätigen";
-          card.querySelector(".check").textContent = "";
-          r.progress = { lastDateIso: todayISO(), doneIds: [...done] };
-          await saveStore();
-          await rerenderProgress();
-        }
-      }
-    });
-
-    list.appendChild(card);
-  }
-
-  await rerenderProgress();
-}
-
-async function renderEdit() {
-  view = "edit";
-  const r = store.routines[currentRid];
-  const meta = routineMeta(currentRid);
-
-  setHeader({
-    title: `Bearbeiten: ${r.title || meta.defaultTitle}`,
-    showBack: true,
-    showEdit: false,
-    showReset: false,
-    showSave: true,
-    showAdd: true,
-    showExport: true,
-    showImport: true
-  });
-
-  app.innerHTML = `
-    <div class="panel">
-      <label>Routine-Titel</label>
-      <input id="rtTitle" type="text" value="${escapeAttr(r.title || meta.defaultTitle)}" />
-      <div class="switchrow">
-        <div>
-          <div style="font-weight:800;">Kind-Modus</div>
-          <div class="hint">Im Routine-Screen kein Zurück/Undo/Edit/Reset. Editor per Long-Press auf die Kachel.</div>
-        </div>
-        <input id="kidMode" type="checkbox" ${r.kidMode ? "checked" : ""} />
-      </div>
-      <div class="switchrow">
-        <div>
-          <div style="font-weight:800;">Auto-Reset täglich</div>
-          <div class="hint">Löscht Haken am neuen Tag automatisch (pro Routine).</div>
-        </div>
-        <input id="autoReset" type="checkbox" ${r.autoResetDaily ? "checked" : ""} />
-      </div>
-    </div>
-
-    <div class="panel">
-      <div style="font-weight:900;margin-bottom:8px;">Items</div>
-      <div class="list" id="editList"></div>
-    </div>
-  `;
-
-  const editList = $("editList");
-  const rtTitle = $("rtTitle");
-  const kidMode = $("kidMode");
-  const autoReset = $("autoReset");
-
-  async function drawItems() {
-    editList.innerHTML = "";
-    for (const item of r.items) {
-      const wrap = document.createElement("div");
-      wrap.className = "itemedit";
-
-      const imgUrl = await imageUrlFromId(item.imageId);
-
-      wrap.innerHTML = `
-        <div class="top">
-          <div class="miniimg">${imgUrl ? `<img alt="" />` : `<span style="font-size:22px;">🖼️</span>`}</div>
-          <div style="flex:1;">
-            <label>Titel</label>
-            <input type="text" value="${escapeAttr(item.title)}" />
-          </div>
-        </div>
-
-        <div class="actions">
-          <div class="left">
-            <button class="btn">Bild wählen</button>
-            <button class="btn">Bild löschen</button>
-            <button class="btn">↑</button>
-            <button class="btn">↓</button>
-          </div>
-          <button class="btn danger">Entfernen</button>
-        </div>
-      `;
-
-      if (imgUrl) wrap.querySelector("img").src = imgUrl;
-
-      const titleInput = wrap.querySelector('input[type="text"]');
-      titleInput.addEventListener("input", () => {
-        item.title = titleInput.value;
-      });
-
-      const btnChoose = wrap.querySelectorAll(".btn")[0];
-      const btnDelImg = wrap.querySelectorAll(".btn")[1];
-      const btnUp = wrap.querySelectorAll(".btn")[2];
-      const btnDown = wrap.querySelectorAll(".btn")[3];
-      const btnRemove = wrap.querySelector(".danger");
-
-      btnChoose.addEventListener("click", async () => {
-        const file = await pickImageFile();
-        if (!file) return;
-
-        if (item.imageId) await imgDel(item.imageId);
-
-        const id = await imgPut(file);
-        item.imageId = id;
-        await saveStore();
-        await drawItems();
-      });
-
-      btnDelImg.addEventListener("click", async () => {
-        if (item.imageId) await imgDel(item.imageId);
-        item.imageId = null;
-        await saveStore();
-        await drawItems();
-      });
-
-      btnUp.addEventListener("click", async () => {
-        const idx = r.items.findIndex(x => x.id === item.id);
-        if (idx > 0) {
-          [r.items[idx - 1], r.items[idx]] = [r.items[idx], r.items[idx - 1]];
-          await saveStore();
-          await drawItems();
-        }
-      });
-
-      btnDown.addEventListener("click", async () => {
-        const idx = r.items.findIndex(x => x.id === item.id);
-        if (idx >= 0 && idx < r.items.length - 1) {
-          [r.items[idx + 1], r.items[idx]] = [r.items[idx], r.items[idx + 1]];
-          await saveStore();
-          await drawItems();
-        }
-      });
-
-      btnRemove.addEventListener("click", async () => {
-        if (item.imageId) await imgDel(item.imageId);
-        r.items = r.items.filter(x => x.id !== item.id);
-        r.progress.doneIds = (r.progress.doneIds || []).filter(id => id !== item.id);
-        await saveStore();
-        await drawItems();
-      });
-
-      editList.appendChild(wrap);
-    }
-  }
-
-  await drawItems();
-
-  saveBtn.onclick = async () => {
-    r.title = rtTitle.value.trim() || meta.defaultTitle;
-    r.kidMode = !!kidMode.checked;
-    r.autoResetDaily = !!autoReset.checked;
-    await saveStore();
-    await renderPick();
-  };
-
-  addBtn.onclick = async () => {
-    const id = crypto.randomUUID();
-    r.items.push({ id, title: "Neu", imageId: null });
-    await saveStore();
-    await drawItems();
-  };
-}
-
-// ---------- Header Buttons wiring ----------
-backBtn.onclick = () => {
-  if (view === "routine") renderPick();
-  else if (view === "edit") renderPick();
-};
-
-editBtn.onclick = () => {
-  if (view === "routine") renderEdit();
-};
-
-resetBtn.onclick = async () => {
-  if (view !== "routine") return;
-  const r = store.routines[currentRid];
-  r.progress = { lastDateIso: todayISO(), doneIds: [] };
-  await saveStore();
-  await renderRoutine();
-};
-
-exportBtn.onclick = async () => {
-  try { await exportBackup(); }
-  catch (e) { console.error(e); alert("Export fehlgeschlagen."); }
-};
-
-importBtn.onclick = async () => {
-  try { await importBackupFlow(); }
-  catch (e) { console.error(e); alert("Import fehlgeschlagen."); }
-};
-
-// ---------- File picking ----------
-function pickImageFile() {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = () => resolve(input.files?.[0] || null);
-    input.click();
-  });
-}
-
-// ---------- Long press ----------
-function attachLongPress(el, onLongPress) {
-  let t = null;
-  const ms = 520;
-
-  const start = () => {
-    clearTimeout(t);
-    t = setTimeout(() => { t = null; onLongPress(); }, ms);
-  };
-  const cancel = () => { clearTimeout(t); t = null; };
-
-  el.addEventListener("touchstart", start, { passive:true });
-  el.addEventListener("touchend", cancel);
-  el.addEventListener("touchmove", cancel);
-  el.addEventListener("mousedown", start);
-  el.addEventListener("mouseup", cancel);
-  el.addEventListener("mouseleave", cancel);
-}
-
-// ---------- Sanitizers ----------
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
-
-// ---------- Boot ----------
-(async function boot(){
-  db = await openDB();
-  store = await loadStore();
-
-  let changed = false;
-  for (const rid of Object.keys(store.routines)) {
-    const r = store.routines[rid];
-    if (applyAutoReset(r)) changed = true;
-  }
-  if (changed) await saveStore();
-
-  await renderPick();
-})();
+          card.classList.remove("d
