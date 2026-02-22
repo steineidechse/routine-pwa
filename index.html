@@ -1,142 +1,244 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <button id="exportBtn" class="btn" style="display:none;">Export</button>
-<button id="importBtn" class="btn" style="display:none;">Import</button>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#ffffff" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon-192.png" />
   <title>Routineplan</title>
+
   <style>
     :root{
-      --bg:#fafafa; --card:#fff; --muted:#666; --line:#e6e6e6;
-      --ok:#2e7d32; --okbg:#e8f5e9; --shadow:0 8px 24px rgba(0,0,0,.08);
+      --bg:#fafafa;
+      --card:#ffffff;
+      --muted:#666;
+      --line:#e6e6e6;
+      --ok:#2e7d32;
+      --okbg:#e8f5e9;
+      --shadow:0 8px 24px rgba(0,0,0,.08);
       --r:18px;
     }
-    *{ box-sizing:border-box; }
-    body{ margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:#111; }
-    header{
-      position:sticky; top:0; z-index:10;
-      background:rgba(250,250,250,.92); backdrop-filter: blur(10px);
-      border-bottom:1px solid var(--line);
-      padding:12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-    }
-    header h1{ font-size:18px; margin:0; flex:1; min-width:160px; }
-    .btn{ border:1px solid var(--line); background:#fff; padding:10px 12px; border-radius:14px; font-weight:600; }
-    .btn.primary{ background:#111; color:#fff; border-color:#111; }
-    .btn:disabled{ opacity:.5; }
-    main{ padding:14px; max-width:760px; margin:0 auto; }
 
-    .grid{ display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+    *{ box-sizing:border-box; }
+
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:var(--bg);
+      color:#111;
+    }
+
+    header{
+      position:sticky;
+      top:0;
+      z-index:10;
+      background:rgba(250,250,250,.95);
+      backdrop-filter: blur(8px);
+      border-bottom:1px solid var(--line);
+      padding:12px 14px;
+      display:flex;
+      flex-wrap:wrap;
+      align-items:center;
+      gap:8px;
+    }
+
+    header h1{
+      font-size:18px;
+      margin:0;
+      flex:1;
+      min-width:150px;
+    }
+
+    .btn{
+      border:1px solid var(--line);
+      background:#fff;
+      padding:10px 12px;
+      border-radius:14px;
+      font-weight:600;
+    }
+
+    .btn.primary{
+      background:#111;
+      color:#fff;
+      border-color:#111;
+    }
+
+    .btn:disabled{
+      opacity:.5;
+    }
+
+    main{
+      padding:14px;
+      max-width:760px;
+      margin:0 auto;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap:12px;
+    }
+
     .tile{
-      background:var(--card); border:1px solid var(--line); border-radius:22px;
-      padding:14px; box-shadow: var(--shadow);
-      min-height:160px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:10px;
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:22px;
+      padding:14px;
+      box-shadow:var(--shadow);
+      min-height:160px;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      gap:10px;
       user-select:none;
     }
+
     .tile .icon{ font-size:44px; }
     .tile .title{ font-size:20px; font-weight:800; text-align:center; }
-    .tile .sub{ font-size:12px; color:var(--muted); text-align:center; min-height:16px; }
-    .row{ display:flex; gap:10px; }
-    .lock{ font-size:14px; padding:8px 10px; border-radius:14px; border:1px solid var(--line); }
+    .tile .sub{ font-size:12px; color:var(--muted); min-height:16px; }
 
-    .list{ display:flex; flex-direction:column; gap:12px; }
+    .row{ display:flex; gap:10px; }
+
+    .list{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+
     .card{
-      background:var(--card); border:1px solid var(--line); border-radius: var(--r);
-      padding:12px; box-shadow: var(--shadow); display:flex; gap:12px; align-items:center;
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--r);
+      padding:12px;
+      box-shadow:var(--shadow);
+      display:flex;
+      gap:12px;
+      align-items:center;
       user-select:none;
     }
+
     .imgbox{
-      width:76px; height:76px; border-radius:16px; background:#f2f2f2; overflow:hidden;
-      display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+      width:76px;
+      height:76px;
+      border-radius:16px;
+      background:#f2f2f2;
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
     }
-    .imgbox img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+    .imgbox img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+    }
+
     .meta{ flex:1; }
-    .meta .t{ font-size:18px; font-weight:800; margin:0 0 2px 0; }
-    .meta .d{ font-size:12px; color:var(--muted); margin:0; }
+
+    .meta .t{
+      font-size:18px;
+      font-weight:800;
+      margin:0 0 2px 0;
+    }
+
+    .meta .d{
+      font-size:12px;
+      color:var(--muted);
+      margin:0;
+    }
+
     .check{
-      width:28px; height:28px; border-radius:999px; border:2px solid #bbb;
-      display:flex; align-items:center; justify-content:center; flex:0 0 auto;
+      width:28px;
+      height:28px;
+      border-radius:999px;
+      border:2px solid #bbb;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
       font-weight:900;
     }
-    .done .check{ border-color: var(--ok); background: var(--ok); color:#fff; }
-    .done{ background: var(--okbg); border-color: rgba(46,125,50,.35); }
-    .progress{ margin-top:10px; font-weight:800; }
 
-    /* Editor */
-    .panel{
-      background:var(--card); border:1px solid var(--line); border-radius:22px;
-      padding:14px; box-shadow: var(--shadow); margin-bottom:12px;
+    .done .check{
+      border-color:var(--ok);
+      background:var(--ok);
+      color:#fff;
     }
-    label{ font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
-    input[type="text"]{
-      width:100%; padding:12px; border-radius:14px; border:1px solid var(--line); font-size:16px;
-    }
-    .switchrow{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; }
-    .switchrow .hint{ font-size:12px; color:var(--muted); margin-top:4px; }
-    .itemedit{
-      border:1px solid var(--line); border-radius:18px; padding:12px; display:flex; flex-direction:column; gap:10px;
-    }
-    .itemedit .top{ display:flex; gap:12px; align-items:center; }
-    .miniimg{ width:78px; height:78px; border-radius:16px; background:#f2f2f2; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-    .miniimg img{ width:100%; height:100%; object-fit:cover; display:block; }
-    .itemedit .actions{ display:flex; gap:10px; flex-wrap:wrap; justify-content:space-between; }
-    .actions .left{ display:flex; gap:10px; flex-wrap:wrap; }
-    .danger{ color:#b00020; border-color:#f0c; }
 
-    /* Sparkles */
+    .done{
+      background:var(--okbg);
+      border-color:rgba(46,125,50,.35);
+    }
+
+    .progress{
+      margin-top:10px;
+      font-weight:800;
+    }
+
     #sparkles{
-      position:fixed; inset:0; pointer-events:none; display:none; z-index:999;
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      display:none;
+      z-index:999;
     }
+
     .spark{
-      position:absolute; width:10px; height:10px;
-      transform: translate(-50%,-50%);
+      position:absolute;
+      transform:translate(-50%,-50%);
       opacity:0;
-      animation: pop 650ms ease-out forwards;
-      filter: drop-shadow(0 4px 10px rgba(0,0,0,.12));
+      animation:pop 650ms ease-out forwards;
     }
+
     .spark::before{
       content:"✦";
       font-size:18px;
-      display:block;
     }
+
     @keyframes pop{
-      0%{ opacity:0; transform: translate(-50%,-50%) scale(.7); }
+      0%{ opacity:0; transform:translate(-50%,-50%) scale(.7); }
       15%{ opacity:1; }
-      100%{ opacity:0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.4); }
+      100%{ opacity:0; transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.4); }
     }
 
     @media (max-width:420px){
       .grid{ grid-template-columns: 1fr; }
-      .tile{ min-height:150px; }
     }
   </style>
 </head>
+
 <body>
-  <header>
-    <button id="backBtn" class="btn" style="display:none;">←</button>
-    <h1 id="title">Routine auswählen</h1>
 
-    <button id="exportBtn" class="btn" style="display:none;">Export</button>
-    <button id="importBtn" class="btn" style="display:none;">Import</button>
+<header>
+  <button id="backBtn" class="btn" style="display:none;">←</button>
+  <h1 id="title">Routine auswählen</h1>
 
-    <button id="editBtn" class="btn" style="display:none;">Bearbeiten</button>
-    <button id="resetBtn" class="btn" style="display:none;">Reset</button>
-    <button id="saveBtn" class="btn primary" style="display:none;">Speichern</button>
-    <button id="addBtn" class="btn" style="display:none;">+ Item</button>
-  </header>
+  <button id="exportBtn" class="btn" style="display:none;">Export</button>
+  <button id="importBtn" class="btn" style="display:none;">Import</button>
 
-  <main id="app"></main>
-  <div id="sparkles"></div>
+  <button id="editBtn" class="btn" style="display:none;">Bearbeiten</button>
+  <button id="resetBtn" class="btn" style="display:none;">Reset</button>
+  <button id="saveBtn" class="btn primary" style="display:none;">Speichern</button>
+  <button id="addBtn" class="btn" style="display:none;">+ Item</button>
+</header>
 
-  <script type="module" src="./app.js"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
-    }
-  </script>
+<main id="app"></main>
+<div id="sparkles"></div>
+
+<script type="module" src="./app.js"></script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js");
+  });
+}
+</script>
+
 </body>
-
-</html>
+  </html>
