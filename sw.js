@@ -1,6 +1,5 @@
 // sw.js — komplett ersetzen
-// Wenn du später wieder Deploy-Probleme hast: v3, v4, ...
-const CACHE = "routinepwa-v3";
+const CACHE = "routinepwa-v4";
 
 const ASSETS = [
   "./",
@@ -12,9 +11,7 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
-  );
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
   self.skipWaiting();
 });
 
@@ -32,7 +29,6 @@ self.addEventListener("fetch", (event) => {
 
   if (req.method !== "GET") return;
 
-  // Navigation: network-first, offline fallback
   if (req.mode === "navigate") {
     event.respondWith((async () => {
       try {
@@ -40,15 +36,13 @@ self.addEventListener("fetch", (event) => {
         const cache = await caches.open(CACHE);
         cache.put("./index.html", fresh.clone());
         return fresh;
-      } catch (e) {
-        const cached = await caches.match("./index.html");
-        return cached || Response.error();
+      } catch {
+        return (await caches.match("./index.html")) || Response.error();
       }
     })());
     return;
   }
 
-  // Assets: cache-first
   event.respondWith((async () => {
     const cached = await caches.match(req);
     if (cached) return cached;
@@ -60,7 +54,7 @@ self.addEventListener("fetch", (event) => {
         cache.put(req, fresh.clone());
       }
       return fresh;
-    } catch (e) {
+    } catch {
       return Response.error();
     }
   })());
