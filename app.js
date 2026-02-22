@@ -110,7 +110,6 @@ function imgClear() {
   });
 }
 function imgKeys() {
-  // getAllKeys ist breit unterstützt; fallback per cursor
   return new Promise((resolve, reject) => {
     const tx = db.transaction("images", "readonly");
     const st = tx.objectStore("images");
@@ -278,7 +277,6 @@ function dataURLToBlob(dataURL) {
 }
 
 async function exportBackup() {
-  // alle Bilder aus images-Store einsammeln
   const keys = await imgKeys();
   const images = {};
   for (const k of keys) {
@@ -333,15 +331,12 @@ async function importBackupFlow() {
     return;
   }
 
-  // Sicherheitsabfrage (überschreibt alles)
   const ok = confirm("Import überschreibt ALLE aktuellen Routinen & Bilder auf diesem Gerät. Fortfahren?");
   if (!ok) return;
 
-  // Stores leeren
   await kvClear();
   await imgClear();
 
-  // Bilder zurückschreiben (mit denselben IDs)
   const images = payload.images || {};
   const ids = Object.keys(images);
   for (const id of ids) {
@@ -351,7 +346,6 @@ async function importBackupFlow() {
     await imgPutWithId(id, blob);
   }
 
-  // Store setzen
   store = payload.store || defaultStore();
   await saveStore();
 
@@ -651,4 +645,72 @@ editBtn.onclick = () => {
 
 resetBtn.onclick = async () => {
   if (view !== "routine") return;
-  const r = store.routines
+  const r = store.routines[currentRid];
+  r.progress = { lastDateIso: todayISO(), doneIds: [] };
+  await saveStore();
+  await renderRoutine();
+};
+
+exportBtn.onclick = async () => {
+  try { await exportBackup(); }
+  catch (e) { console.error(e); alert("Export fehlgeschlagen."); }
+};
+
+importBtn.onclick = async () => {
+  try { await importBackupFlow(); }
+  catch (e) { console.error(e); alert("Import fehlgeschlagen."); }
+};
+
+// ---------- File picking ----------
+function pickImageFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+// ---------- Long press ----------
+function attachLongPress(el, onLongPress) {
+  let t = null;
+  const ms = 520;
+
+  const start = () => {
+    clearTimeout(t);
+    t = setTimeout(() => { t = null; onLongPress(); }, ms);
+  };
+  const cancel = () => { clearTimeout(t); t = null; };
+
+  el.addEventListener("touchstart", start, { passive:true });
+  el.addEventListener("touchend", cancel);
+  el.addEventListener("touchmove", cancel);
+  el.addEventListener("mousedown", start);
+  el.addEventListener("mouseup", cancel);
+  el.addEventListener("mouseleave", cancel);
+}
+
+// ---------- Sanitizers ----------
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;")
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
+
+// ---------- Boot ----------
+(async function boot(){
+  db = await openDB();
+  store = await loadStore();
+
+  let changed = false;
+  for (const rid of Object.keys(store.routines)) {
+    const r = store.routines[rid];
+    if (applyAutoReset(r)) changed = true;
+  }
+  if (changed) await saveStore();
+
+  await renderPick();
+})();
