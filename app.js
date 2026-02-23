@@ -2,7 +2,10 @@
    + Export/Import als Datei (.json) inkl. Bilder (Base64 DataURLs)
    + Belohnungs-Screen wenn Routine komplett
    + Sticker-Pool (PNG) -> random ohne Wiederholung -> pinned auf Startseite
-   + Kind-Modus: "Nochmal" Button im Belohnungs-Screen entfernt */
+   + Sticker wird erst groß gezeigt, dann gepinnt
+   + Kind-Modus: kein "Nochmal"
+   + Startseite: Sticker-Menü im Kindmodus versteckt (Admin: Long-Press zum Anzeigen)
+   + Sound: 8-bit coin bei Item-Erledigung (WebAudio) */
 
 const ROUTINES = [
   { id: "MORNING", icon: "🌞", defaultTitle: "Morgen" },
@@ -11,6 +14,7 @@ const ROUTINES = [
 ];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const nowIso = () => new Date().toISOString();
 
 const $ = (id) => document.getElementById(id);
 const app = $("app");
@@ -45,8 +49,20 @@ function injectStyles() {
     text-align:center;
   }
   .rewardTitle{ font-size:22px; font-weight:900; margin:8px 0 6px 0; }
-  .rewardSub{ font-size:14px; opacity:.75; margin:0 0 14px 0; }
-  .rewardBig{ font-size:56px; line-height:1; margin:8px 0 12px 0; }
+  .rewardSub{ font-size:14px; opacity:.75; margin:0 0 12px 0; }
+  .rewardBig{ font-size:56px; line-height:1; margin:8px 0 8px 0; }
+
+  .rewardStickerWrap{
+    width: 200px; height: 200px;
+    margin: 10px auto 8px auto;
+    border-radius:24px;
+    background:#fafafa;
+    border:1px solid #e6e6e6;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .rewardStickerWrap img{ width:100%; height:100%; object-fit:contain; display:block; }
+
   .rewardBtns{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px; }
   .rewardBtn{
     border:1px solid #e6e6e6;
@@ -77,11 +93,12 @@ function injectStyles() {
   .panel{
     background:#fff; border:1px solid #e6e6e6; border-radius:22px;
     padding:14px; box-shadow: 0 8px 24px rgba(0,0,0,.08);
-    margin-bottom:12px;
+    margin-top:12px;
   }
   .stickerGrid{
     display:flex; flex-wrap:wrap; gap:10px;
     margin-top:10px;
+    min-height:74px;
   }
   .sticker{
     width:64px; height:64px; border-radius:16px;
@@ -90,16 +107,60 @@ function injectStyles() {
     overflow:hidden;
   }
   .sticker img{ width:100%; height:100%; object-fit:contain; display:block; }
+
   .hint{ font-size:12px; color:#666; margin-top:8px; }
   .rowBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
   .btnTiny{
     border:1px solid #e6e6e6; background:#fff; padding:10px 12px; border-radius:14px; font-weight:700;
   }
   .danger{ color:#b00020; border-color:#f0c; }
+
+  .togRow{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;
+    border-top:1px dashed #e6e6e6; padding-top:10px;
+  }
   `;
   const el = document.createElement("style");
   el.textContent = css;
   document.head.appendChild(el);
+}
+
+// ---------- 8-bit coin sound (Web Audio) ----------
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// simple "coin" chirp: short square + pitch up
+function playCoin() {
+  try {
+    if (!store?.settings?.soundOn) return;
+
+    const ctx = getAudioCtx();
+    if (ctx.state === "suspended") ctx.resume();
+
+    const t0 = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(880, t0);
+    osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.06);
+    osc.frequency.exponentialRampToValueAtTime(990, t0 + 0.12);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(t0);
+    osc.stop(t0 + 0.13);
+  } catch {
+    // ignore audio errors silently
+  }
 }
 
 // ---------- IndexedDB ----------
@@ -221,7 +282,7 @@ function defaultStore() {
         kidMode: false,
         autoResetDaily: true,
         rewardEnabled: true,
-        progress: { lastDateIso: null, doneIds: [] },
+        progress: { lastDateIso: null, doneIds: [], rewardGiven: false },
         items: [
           { id: "wake", title: "Aufstehen", imageId: null },
           { id: "toilet", title: "Toilette", imageId: null },
@@ -238,7 +299,7 @@ function defaultStore() {
         kidMode: false,
         autoResetDaily: true,
         rewardEnabled: true,
-        progress: { lastDateIso: null, doneIds: [] },
+        progress: { lastDateIso: null, doneIds: [], rewardGiven: false },
         items: [
           { id: "dinner", title: "Abendessen", imageId: null },
           { id: "tidy", title: "Aufräumen", imageId: null },
@@ -255,7 +316,7 @@ function defaultStore() {
         kidMode: false,
         autoResetDaily: true,
         rewardEnabled: true,
-        progress: { lastDateIso: null, doneIds: [] },
+        progress: { lastDateIso: null, doneIds: [], rewardGiven: false },
         items: [
           { id: "slowbreak", title: "Langsam frühstücken", imageId: null },
           { id: "out", title: "Rausgehen", imageId: null },
@@ -267,10 +328,16 @@ function defaultStore() {
       }
     },
 
-    // NEW: Sticker system
-    stickerPoolIds: [],      // array of imageIds (stickers)
-    stickerDrawBag: [],      // shuffled bag of ids (no repeats until empty)
-    pinnedStickers: []       // [{ id, routineId, imageId, earnedAtIso }]
+    // Sticker system
+    stickerPoolIds: [],      // imageIds (stickers)
+    stickerDrawBag: [],      // shuffled bag (no repeats)
+    pinnedStickers: [],      // [{ id, routineId, imageId, earnedAtIso }]
+
+    // app settings
+    settings: {
+      soundOn: true,
+      adminStickerControls: false // hidden by default if kid mode exists
+    }
   };
 }
 
@@ -278,10 +345,13 @@ function migrateStore(s) {
   if (!s || typeof s !== "object") return defaultStore();
   if (!s.routines || typeof s.routines !== "object") return defaultStore();
 
-  // add sticker fields if missing
   if (!Array.isArray(s.stickerPoolIds)) s.stickerPoolIds = [];
   if (!Array.isArray(s.stickerDrawBag)) s.stickerDrawBag = [];
   if (!Array.isArray(s.pinnedStickers)) s.pinnedStickers = [];
+
+  if (!s.settings || typeof s.settings !== "object") s.settings = {};
+  if (typeof s.settings.soundOn !== "boolean") s.settings.soundOn = true;
+  if (typeof s.settings.adminStickerControls !== "boolean") s.settings.adminStickerControls = false;
 
   for (const rid of Object.keys(s.routines)) {
     const r = s.routines[rid];
@@ -291,9 +361,10 @@ function migrateStore(s) {
     if (typeof r.autoResetDaily !== "boolean") r.autoResetDaily = true;
     if (typeof r.rewardEnabled !== "boolean") r.rewardEnabled = true;
 
-    if (!r.progress || typeof r.progress !== "object") r.progress = { lastDateIso: null, doneIds: [] };
+    if (!r.progress || typeof r.progress !== "object") r.progress = { lastDateIso: null, doneIds: [], rewardGiven: false };
     if (!Array.isArray(r.progress.doneIds)) r.progress.doneIds = [];
     if (typeof r.progress.lastDateIso !== "string" && r.progress.lastDateIso !== null) r.progress.lastDateIso = null;
+    if (typeof r.progress.rewardGiven !== "boolean") r.progress.rewardGiven = false;
 
     if (!Array.isArray(r.items)) r.items = [];
     for (const it of r.items) {
@@ -380,7 +451,8 @@ function confettiBurst() {
 }
 
 // showAgain=false -> removes "Nochmal" button (kid mode)
-function showRewardScreen({ title, showAgain, onAgain, onHome }) {
+// stickerUrl optional -> shown big
+function showRewardScreen({ title, showAgain, stickerUrl, onAgain, onContinue }) {
   const existing = document.getElementById("rewardOverlay");
   if (existing) existing.remove();
 
@@ -395,9 +467,15 @@ function showRewardScreen({ title, showAgain, onAgain, onHome }) {
       <div class="rewardBig">🏆</div>
       <div class="rewardTitle">Alles geschafft!</div>
       <p class="rewardSub">${escapeHtml(title)} ist komplett erledigt.</p>
+
+      ${stickerUrl ? `
+        <div class="rewardSub" style="margin-top:6px;">Du hast einen Sticker bekommen!</div>
+        <div class="rewardStickerWrap"><img alt="" /></div>
+      ` : ``}
+
       <div class="rewardBtns">
-        ${showAgain ? `<button class="rewardBtn primary" id="rewardAgain">Nochmal</button>` : ``}
-        <button class="rewardBtn ${showAgain ? "" : "primary"}" id="rewardHome">Zur Auswahl</button>
+        ${showAgain ? `<button class="rewardBtn" id="rewardAgain">Nochmal</button>` : ``}
+        <button class="rewardBtn primary" id="rewardContinue">Weiter</button>
       </div>
     </div>
   `;
@@ -405,11 +483,16 @@ function showRewardScreen({ title, showAgain, onAgain, onHome }) {
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) {
       overlay.remove();
-      onHome?.();
+      onContinue?.();
     }
   });
 
   document.body.appendChild(overlay);
+
+  if (stickerUrl) {
+    const img = overlay.querySelector(".rewardStickerWrap img");
+    if (img) img.src = stickerUrl;
+  }
 
   if (showAgain) {
     overlay.querySelector("#rewardAgain").addEventListener("click", () => {
@@ -417,9 +500,10 @@ function showRewardScreen({ title, showAgain, onAgain, onHome }) {
       onAgain?.();
     });
   }
-  overlay.querySelector("#rewardHome").addEventListener("click", () => {
+
+  overlay.querySelector("#rewardContinue").addEventListener("click", () => {
     overlay.remove();
-    onHome?.();
+    onContinue?.();
   });
 }
 
@@ -436,10 +520,7 @@ function shuffle(arr) {
 function ensureStickerBag() {
   const pool = store.stickerPoolIds || [];
   if (!Array.isArray(store.stickerDrawBag)) store.stickerDrawBag = [];
-
-  // Remove ids that no longer exist in pool
   store.stickerDrawBag = store.stickerDrawBag.filter(id => pool.includes(id));
-
   if (store.stickerDrawBag.length === 0 && pool.length > 0) {
     store.stickerDrawBag = shuffle(pool);
   }
@@ -448,18 +529,15 @@ function ensureStickerBag() {
 function drawStickerIdNoRepeat() {
   ensureStickerBag();
   if (!store.stickerDrawBag.length) return null;
-  return store.stickerDrawBag.pop(); // pop gives no repeats until refill
+  return store.stickerDrawBag.pop();
 }
 
-async function addPinnedSticker(routineId) {
-  const stickerId = drawStickerIdNoRepeat();
-  if (!stickerId) return null;
-
+async function addPinnedSticker(routineId, imageId) {
   const pin = {
     id: crypto.randomUUID(),
     routineId,
-    imageId: stickerId,
-    earnedAtIso: new Date().toISOString()
+    imageId,
+    earnedAtIso: nowIso()
   };
   store.pinnedStickers.unshift(pin);
   await saveStore();
@@ -472,14 +550,12 @@ async function uploadStickerPNGs() {
 
   let added = 0;
   for (const f of files) {
-    // only png
     if (f.type !== "image/png") continue;
-    const id = await imgPut(f); // store blob, get id
+    const id = await imgPut(f);
     store.stickerPoolIds.push(id);
     added++;
   }
 
-  // reset bag so new pool is included; keep no-repeat behavior
   store.stickerDrawBag = [];
   ensureStickerBag();
 
@@ -488,15 +564,11 @@ async function uploadStickerPNGs() {
 }
 
 async function clearStickerPool() {
-  // remove pool images from images store
   const ids = store.stickerPoolIds || [];
-  for (const id of ids) {
-    await imgDel(id);
-  }
+  for (const id of ids) await imgDel(id);
+
   store.stickerPoolIds = [];
   store.stickerDrawBag = [];
-
-  // also remove pins that referenced these
   store.pinnedStickers = (store.pinnedStickers || []).filter(p => p && p.imageId && !ids.includes(p.imageId));
 
   await saveStore();
@@ -516,7 +588,7 @@ function applyAutoReset(r) {
   if (!r.autoResetDaily) return false;
   const today = todayISO();
   if (r.progress.lastDateIso !== today) {
-    r.progress = { lastDateIso: today, doneIds: [] };
+    r.progress = { lastDateIso: today, doneIds: [], rewardGiven: false };
     return true;
   }
   return false;
@@ -527,6 +599,10 @@ async function imageUrlFromId(imageId) {
   const blob = await imgGet(imageId);
   if (!blob) return null;
   return URL.createObjectURL(blob);
+}
+
+function anyRoutineKidMode() {
+  return Object.values(store.routines || {}).some(r => r?.kidMode);
 }
 
 // ---------- Export / Import ----------
@@ -561,7 +637,7 @@ async function exportBackup() {
   const payload = {
     format: "routinepwa-backup",
     version: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: nowIso(),
     store,
     images
   };
@@ -620,8 +696,6 @@ async function importBackupFlow() {
   }
 
   store = migrateStore(payload.store || defaultStore());
-
-  // Ensure bag is consistent with pool after import
   ensureStickerBag();
 
   await saveStore();
@@ -639,27 +713,47 @@ async function renderPick() {
     showExport:true, showImport:true
   });
 
+  const kidExists = anyRoutineKidMode();
+  const showControls = !kidExists || !!store.settings.adminStickerControls;
+
   app.innerHTML = `
     <div class="grid" id="grid"></div>
 
-    <div class="panel" style="margin-top:12px;">
-      <div style="font-weight:900;">Belohnungs-Sticker</div>
-      <div class="hint">
-        Pool: <b id="poolCount">0</b> PNGs • Angepinnt: <b id="pinCount">0</b>
-      </div>
-      <div class="rowBtns">
-        <button class="btnTiny" id="uploadStickersBtn">PNG-Sticker hochladen</button>
-        <button class="btnTiny danger" id="clearPinsBtn">Pins löschen</button>
-        <button class="btnTiny danger" id="clearPoolBtn">Pool löschen</button>
-      </div>
-      <div class="hint">
-        Randomizer ohne Wiederholungen: Erst wenn alle Sticker einmal dran waren, wird neu gemischt.
-      </div>
+    <div class="panel">
+      <div style="font-weight:900;" id="stickersTitle">Belohnungs-Sticker</div>
+
+      ${showControls ? `
+        <div class="hint">
+          Pool: <b id="poolCount">0</b> PNGs • Angepinnt: <b id="pinCount">0</b>
+        </div>
+
+        <div class="rowBtns">
+          <button class="btnTiny" id="uploadStickersBtn">PNG-Sticker hochladen</button>
+          <button class="btnTiny danger" id="clearPinsBtn">Pins löschen</button>
+          <button class="btnTiny danger" id="clearPoolBtn">Pool löschen</button>
+        </div>
+
+        <div class="togRow">
+          <div>
+            <div style="font-weight:800;">Sound</div>
+            <div class="hint" style="margin-top:2px;">8-Bit-Coin bei erledigten Items.</div>
+          </div>
+          <input id="soundOn" type="checkbox" ${store.settings.soundOn ? "checked" : ""} />
+        </div>
+
+        <div class="hint">
+          Randomizer ohne Wiederholungen: Erst wenn alle Sticker einmal dran waren, wird neu gemischt.
+        </div>
+      ` : `
+        <div class="hint">Sticker werden hier gesammelt.</div>
+      `}
+
       <div class="stickerGrid" id="pinnedGrid"></div>
     </div>
 
     <p class="hint">
       Tipp: <b>Long-Press</b> auf eine Routine-Kachel öffnet den Editor (praktisch bei Kind-Modus).
+      ${kidExists ? `<br>Admin-Tipp: Long-Press auf „Belohnungs-Sticker“ blendet das Sticker-Menü ein/aus.` : ``}
     </p>
   `;
 
@@ -695,17 +789,17 @@ async function renderPick() {
   }
 
   // Sticker panel wiring
-  const poolCount = $("poolCount");
-  const pinCount = $("pinCount");
   const pinnedGrid = $("pinnedGrid");
-  const uploadBtn = $("uploadStickersBtn");
-  const clearPinsBtn = $("clearPinsBtn");
-  const clearPoolBtn = $("clearPoolBtn");
+  const stickersTitle = $("stickersTitle");
+
+  // Admin toggle for controls: Long-Press on title
+  attachLongPress(stickersTitle, async () => {
+    store.settings.adminStickerControls = !store.settings.adminStickerControls;
+    await saveStore();
+    await renderPick();
+  });
 
   async function drawPinned() {
-    poolCount.textContent = String((store.stickerPoolIds || []).length);
-    pinCount.textContent = String((store.pinnedStickers || []).length);
-
     pinnedGrid.innerHTML = "";
     const pins = store.pinnedStickers || [];
     for (const p of pins) {
@@ -717,33 +811,50 @@ async function renderPick() {
       if (url) el.querySelector("img").src = url;
       pinnedGrid.appendChild(el);
     }
-
-    // disable buttons if empty
-    clearPinsBtn.disabled = (pins.length === 0);
-    clearPoolBtn.disabled = ((store.stickerPoolIds || []).length === 0);
   }
 
-  uploadBtn.addEventListener("click", async () => {
-    const added = await uploadStickerPNGs();
-    if (added > 0) alert(`Sticker hinzugefügt: ${added}`);
-    await drawPinned();
-  });
-
-  clearPinsBtn.addEventListener("click", async () => {
-    const ok = confirm("Alle angepinnten Sticker löschen?");
-    if (!ok) return;
-    await clearPinnedStickers();
-    await drawPinned();
-  });
-
-  clearPoolBtn.addEventListener("click", async () => {
-    const ok = confirm("Sticker-Pool löschen? (entfernt auch Pins, die daraus stammen)");
-    if (!ok) return;
-    await clearStickerPool();
-    await drawPinned();
-  });
-
   await drawPinned();
+
+  if (showControls) {
+    const poolCount = $("poolCount");
+    const pinCount = $("pinCount");
+    const uploadBtn = $("uploadStickersBtn");
+    const clearPinsBtn = $("clearPinsBtn");
+    const clearPoolBtn = $("clearPoolBtn");
+    const soundOn = $("soundOn");
+
+    poolCount.textContent = String((store.stickerPoolIds || []).length);
+    pinCount.textContent = String((store.pinnedStickers || []).length);
+
+    clearPinsBtn.disabled = ((store.pinnedStickers || []).length === 0);
+    clearPoolBtn.disabled = ((store.stickerPoolIds || []).length === 0);
+
+    uploadBtn.addEventListener("click", async () => {
+      const added = await uploadStickerPNGs();
+      if (added > 0) alert(`Sticker hinzugefügt: ${added}`);
+      await renderPick();
+    });
+
+    clearPinsBtn.addEventListener("click", async () => {
+      const ok = confirm("Alle angepinnten Sticker löschen?");
+      if (!ok) return;
+      await clearPinnedStickers();
+      await renderPick();
+    });
+
+    clearPoolBtn.addEventListener("click", async () => {
+      const ok = confirm("Sticker-Pool löschen? (entfernt auch Pins, die daraus stammen)");
+      if (!ok) return;
+      await clearStickerPool();
+      await renderPick();
+    });
+
+    soundOn.addEventListener("change", async () => {
+      store.settings.soundOn = !!soundOn.checked;
+      await saveStore();
+      if (store.settings.soundOn) playCoin();
+    });
+  }
 }
 
 async function renderRoutine() {
@@ -780,26 +891,58 @@ async function renderRoutine() {
 
   async function maybeReward() {
     if (!r.rewardEnabled) return;
-    if (items.length > 0 && done.size === items.length) {
-      // Pin a sticker (if pool exists) – persists on device
-      if ((store.stickerPoolIds || []).length > 0) {
-        await addPinnedSticker(currentRid);
-      }
+    if (items.length === 0) return;
+    if (done.size !== items.length) return;
 
-      // Kind-Modus: kein "Nochmal"
+    // prevent multiple rewards for the same completion state
+    if (r.progress.rewardGiven) {
+      // still show reward screen (without giving new sticker) when opening completed routine
       showRewardScreen({
         title: r.title || meta.defaultTitle,
         showAgain: !kid,
+        stickerUrl: null,
         onAgain: async () => {
-          r.progress = { lastDateIso: todayISO(), doneIds: [] };
+          r.progress = { lastDateIso: todayISO(), doneIds: [], rewardGiven: false };
           await saveStore();
           await renderRoutine();
         },
-        onHome: async () => {
-          await renderPick();
-        }
+        onContinue: async () => { await renderPick(); }
       });
+      return;
     }
+
+    // Give reward exactly once
+    r.progress.rewardGiven = true;
+    r.progress.lastDateIso = todayISO();
+    await saveStore();
+
+    let stickerId = null;
+    let stickerUrl = null;
+
+    if ((store.stickerPoolIds || []).length > 0) {
+      stickerId = drawStickerIdNoRepeat();
+      if (stickerId) {
+        stickerUrl = await imageUrlFromId(stickerId);
+      }
+    }
+
+    showRewardScreen({
+      title: r.title || meta.defaultTitle,
+      showAgain: !kid, // kid mode: no "Nochmal"
+      stickerUrl,
+      onAgain: async () => {
+        r.progress = { lastDateIso: todayISO(), doneIds: [], rewardGiven: false };
+        await saveStore();
+        await renderRoutine();
+      },
+      onContinue: async () => {
+        // Pin AFTER showing big
+        if (stickerId) {
+          await addPinnedSticker(currentRid, stickerId);
+        }
+        await renderPick();
+      }
+    });
   }
 
   for (const item of items) {
@@ -826,9 +969,13 @@ async function renderRoutine() {
         card.classList.add("done");
         card.querySelector(".d").textContent = "Erledigt";
         card.querySelector(".check").textContent = "✓";
+
+        playCoin();
         triggerSparkles();
-        r.progress = { lastDateIso: todayISO(), doneIds: [...done] };
+
+        r.progress = { lastDateIso: todayISO(), doneIds: [...done], rewardGiven: r.progress.rewardGiven || false };
         await saveStore();
+
         await rerenderProgress();
         await maybeReward();
       } else {
@@ -837,8 +984,11 @@ async function renderRoutine() {
           card.classList.remove("done");
           card.querySelector(".d").textContent = "Antippen zum Bestätigen";
           card.querySelector(".check").textContent = "";
-          r.progress = { lastDateIso: todayISO(), doneIds: [...done] };
+
+          // undo means reward can be re-earned later
+          r.progress = { lastDateIso: todayISO(), doneIds: [...done], rewardGiven: false };
           await saveStore();
+
           await rerenderProgress();
         }
       }
@@ -848,7 +998,7 @@ async function renderRoutine() {
   }
 
   await rerenderProgress();
-  await maybeReward(); // if already complete (e.g. after import)
+  await maybeReward();
 }
 
 async function renderEdit() {
@@ -872,26 +1022,26 @@ async function renderEdit() {
       <label>Routine-Titel</label>
       <input id="rtTitle" type="text" value="${escapeAttr(r.title || meta.defaultTitle)}" />
 
-      <div class="switchrow" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+      <div class="togRow">
         <div>
           <div style="font-weight:800;">Kind-Modus</div>
-          <div style="font-size:12px;color:#666;margin-top:4px;">Im Routine-Screen kein Zurück/Undo/Edit/Reset. Editor per Long-Press.</div>
+          <div class="hint" style="margin-top:2px;">Im Routine-Screen kein Zurück/Undo/Edit/Reset. Editor per Long-Press.</div>
         </div>
         <input id="kidMode" type="checkbox" ${r.kidMode ? "checked" : ""} />
       </div>
 
-      <div class="switchrow" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+      <div class="togRow">
         <div>
           <div style="font-weight:800;">Auto-Reset täglich</div>
-          <div style="font-size:12px;color:#666;margin-top:4px;">Löscht Haken am neuen Tag automatisch (pro Routine).</div>
+          <div class="hint" style="margin-top:2px;">Löscht Haken am neuen Tag automatisch (pro Routine).</div>
         </div>
         <input id="autoReset" type="checkbox" ${r.autoResetDaily ? "checked" : ""} />
       </div>
 
-      <div class="switchrow" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+      <div class="togRow">
         <div>
           <div style="font-weight:800;">Belohnungs-Screen</div>
-          <div style="font-size:12px;color:#666;margin-top:4px;">Zeigt eine Belohnung, wenn alle Aufgaben erledigt sind.</div>
+          <div class="hint" style="margin-top:2px;">Zeigt eine Belohnung, wenn alle Aufgaben erledigt sind.</div>
         </div>
         <input id="rewardEnabled" type="checkbox" ${r.rewardEnabled ? "checked" : ""} />
       </div>
@@ -987,6 +1137,7 @@ async function renderEdit() {
         if (item.imageId) await imgDel(item.imageId);
         r.items = r.items.filter(x => x.id !== item.id);
         r.progress.doneIds = (r.progress.doneIds || []).filter(id => id !== item.id);
+        r.progress.rewardGiven = false;
         await saveStore();
         await drawItems();
       });
@@ -1009,6 +1160,7 @@ async function renderEdit() {
   addBtn.onclick = async () => {
     const id = crypto.randomUUID();
     r.items.push({ id, title: "Neu", imageId: null });
+    r.progress.rewardGiven = false;
     await saveStore();
     await drawItems();
   };
@@ -1027,7 +1179,7 @@ editBtn.onclick = () => {
 resetBtn.onclick = async () => {
   if (view !== "routine") return;
   const r = store.routines[currentRid];
-  r.progress = { lastDateIso: todayISO(), doneIds: [] };
+  r.progress = { lastDateIso: todayISO(), doneIds: [], rewardGiven: false };
   await saveStore();
   await renderRoutine();
 };
@@ -1052,7 +1204,6 @@ function pickImageFile() {
     input.click();
   });
 }
-
 function pickPNGsMultiple() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -1099,10 +1250,13 @@ function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
   db = await openDB();
   store = await loadStore();
 
-  // Ensure bag is consistent with pool on load
+  // If any routine uses kid mode, default to hidden admin sticker controls
+  if (anyRoutineKidMode() && typeof store.settings.adminStickerControls !== "boolean") {
+    store.settings.adminStickerControls = false;
+  }
+
   ensureStickerBag();
 
-  // Auto-reset per routine
   let changed = false;
   for (const rid of Object.keys(store.routines)) {
     const r = store.routines[rid];
