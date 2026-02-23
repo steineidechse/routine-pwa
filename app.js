@@ -5,7 +5,9 @@
    + Sticker wird erst groß gezeigt, dann gepinnt
    + Kind-Modus: kein "Nochmal"
    + Startseite: Sticker-Menü im Kindmodus versteckt (Admin: Long-Press zum Anzeigen)
-   + Sound: 8-bit coin bei Item-Erledigung (WebAudio) */
+   + Sound: 8-bit coin bei Item-Erledigung (WebAudio)
+   + Pins gruppiert nach Routine (mit Routine-Icon)
+   + Sticker antippbar: nur groß/klein (Viewer), NICHT löschen */
 
 const ROUTINES = [
   { id: "MORNING", icon: "🌞", defaultTitle: "Morgen" },
@@ -95,23 +97,12 @@ function injectStyles() {
     padding:14px; box-shadow: 0 8px 24px rgba(0,0,0,.08);
     margin-top:12px;
   }
-  .stickerGrid{
-    display:flex; flex-wrap:wrap; gap:10px;
-    margin-top:10px;
-    min-height:74px;
-  }
-  .sticker{
-    width:64px; height:64px; border-radius:16px;
-    border:1px solid #e6e6e6; background:#fafafa;
-    display:flex; align-items:center; justify-content:center;
-    overflow:hidden;
-  }
-  .sticker img{ width:100%; height:100%; object-fit:contain; display:block; }
-
   .hint{ font-size:12px; color:#666; margin-top:8px; }
+
   .rowBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
   .btnTiny{
-    border:1px solid #e6e6e6; background:#fff; padding:10px 12px; border-radius:14px; font-weight:700;
+    border:1px solid #e6e6e6; background:#fff;
+    padding:10px 12px; border-radius:14px; font-weight:700;
   }
   .danger{ color:#b00020; border-color:#f0c; }
 
@@ -119,6 +110,60 @@ function injectStyles() {
     display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;
     border-top:1px dashed #e6e6e6; padding-top:10px;
   }
+
+  .stickerGroups{ display:flex; flex-direction:column; gap:12px; margin-top:10px; }
+  .stickerGroup{
+    border:1px solid #e6e6e6;
+    border-radius:18px;
+    padding:10px;
+    background:#fafafa;
+  }
+  .stickerGroupHead{
+    display:flex; align-items:center; gap:10px;
+    font-weight:900;
+    margin-bottom:8px;
+  }
+  .stickerGroupHead .ico{ font-size:18px; }
+  .stickerGrid{
+    display:flex; flex-wrap:wrap; gap:10px;
+    min-height:74px;
+  }
+  .sticker{
+    width:64px; height:64px; border-radius:16px;
+    border:1px solid #e6e6e6; background:#fff;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .sticker img{ width:100%; height:100%; object-fit:contain; display:block; }
+
+  /* Sticker viewer (tap to close) */
+  .viewerOverlay{
+    position:fixed; inset:0; z-index:2500;
+    background: rgba(0,0,0,.70);
+    display:flex; align-items:center; justify-content:center;
+    padding:18px;
+  }
+  .viewerCard{
+    width:min(520px, 100%);
+    border-radius:24px;
+    background:#fff;
+    border:1px solid rgba(0,0,0,.08);
+    box-shadow: 0 18px 50px rgba(0,0,0,.25);
+    padding:14px;
+    text-align:center;
+  }
+  .viewerImgWrap{
+    width: min(360px, 82vw);
+    height: min(360px, 82vw);
+    margin: 6px auto 10px auto;
+    border-radius:22px;
+    background:#fafafa;
+    border:1px solid #e6e6e6;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .viewerImgWrap img{ width:100%; height:100%; object-fit:contain; display:block; }
+  .viewerHint{ font-size:12px; color:#666; margin-top:6px; }
   `;
   const el = document.createElement("style");
   el.textContent = css;
@@ -127,17 +172,13 @@ function injectStyles() {
 
 // ---------- 8-bit coin sound (Web Audio) ----------
 let audioCtx = null;
-
 function getAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   return audioCtx;
 }
-
-// simple "coin" chirp: short square + pitch up
 function playCoin() {
   try {
     if (!store?.settings?.soundOn) return;
-
     const ctx = getAudioCtx();
     if (ctx.state === "suspended") ctx.resume();
 
@@ -158,9 +199,7 @@ function playCoin() {
 
     osc.start(t0);
     osc.stop(t0 + 0.13);
-  } catch {
-    // ignore audio errors silently
-  }
+  } catch {}
 }
 
 // ---------- IndexedDB ----------
@@ -329,14 +368,14 @@ function defaultStore() {
     },
 
     // Sticker system
-    stickerPoolIds: [],      // imageIds (stickers)
-    stickerDrawBag: [],      // shuffled bag (no repeats)
-    pinnedStickers: [],      // [{ id, routineId, imageId, earnedAtIso }]
+    stickerPoolIds: [],
+    stickerDrawBag: [],
+    pinnedStickers: [],
 
-    // app settings
+    // settings
     settings: {
       soundOn: true,
-      adminStickerControls: false // hidden by default if kid mode exists
+      adminStickerControls: false
     }
   };
 }
@@ -426,6 +465,31 @@ function triggerSparkles() {
   setTimeout(() => { sparkles.style.display = "none"; }, 680);
 }
 
+// ---------- Viewer (Sticker groß/klein) ----------
+function openStickerViewer(stickerUrl, titleText = "Sticker") {
+  if (!stickerUrl) return;
+
+  const existing = document.getElementById("viewerOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "viewerOverlay";
+  overlay.id = "viewerOverlay";
+  overlay.innerHTML = `
+    <div class="viewerCard" role="dialog" aria-modal="true">
+      <div style="font-weight:900;">${escapeHtml(titleText)}</div>
+      <div class="viewerImgWrap"><img alt="" /></div>
+      <div class="viewerHint">Antippen zum Schließen</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const img = overlay.querySelector(".viewerImgWrap img");
+  img.src = stickerUrl;
+
+  overlay.addEventListener("click", () => overlay.remove());
+}
+
 // ---------- Reward / Confetti ----------
 function confettiBurst() {
   const layer = document.createElement("div");
@@ -450,8 +514,8 @@ function confettiBurst() {
   setTimeout(() => layer.remove(), 1100);
 }
 
-// showAgain=false -> removes "Nochmal" button (kid mode)
-// stickerUrl optional -> shown big
+// showAgain=false -> removes "Nochmal" (kid mode)
+// stickerUrl optional -> shown big; tapping image opens viewer too
 function showRewardScreen({ title, showAgain, stickerUrl, onAgain, onContinue }) {
   const existing = document.getElementById("rewardOverlay");
   if (existing) existing.remove();
@@ -470,7 +534,7 @@ function showRewardScreen({ title, showAgain, stickerUrl, onAgain, onContinue })
 
       ${stickerUrl ? `
         <div class="rewardSub" style="margin-top:6px;">Du hast einen Sticker bekommen!</div>
-        <div class="rewardStickerWrap"><img alt="" /></div>
+        <div class="rewardStickerWrap" id="rewardStickerTap"><img alt="" /></div>
       ` : ``}
 
       <div class="rewardBtns">
@@ -492,6 +556,8 @@ function showRewardScreen({ title, showAgain, stickerUrl, onAgain, onContinue })
   if (stickerUrl) {
     const img = overlay.querySelector(".rewardStickerWrap img");
     if (img) img.src = stickerUrl;
+    const tap = overlay.querySelector("#rewardStickerTap");
+    if (tap) tap.addEventListener("click", () => openStickerViewer(stickerUrl, "Neuer Sticker"));
   }
 
   if (showAgain) {
@@ -500,7 +566,6 @@ function showRewardScreen({ title, showAgain, stickerUrl, onAgain, onContinue })
       onAgain?.();
     });
   }
-
   overlay.querySelector("#rewardContinue").addEventListener("click", () => {
     overlay.remove();
     onContinue?.();
@@ -516,7 +581,6 @@ function shuffle(arr) {
   }
   return a;
 }
-
 function ensureStickerBag() {
   const pool = store.stickerPoolIds || [];
   if (!Array.isArray(store.stickerDrawBag)) store.stickerDrawBag = [];
@@ -525,13 +589,11 @@ function ensureStickerBag() {
     store.stickerDrawBag = shuffle(pool);
   }
 }
-
 function drawStickerIdNoRepeat() {
   ensureStickerBag();
   if (!store.stickerDrawBag.length) return null;
   return store.stickerDrawBag.pop();
 }
-
 async function addPinnedSticker(routineId, imageId) {
   const pin = {
     id: crypto.randomUUID(),
@@ -543,7 +605,6 @@ async function addPinnedSticker(routineId, imageId) {
   await saveStore();
   return pin;
 }
-
 async function uploadStickerPNGs() {
   const files = await pickPNGsMultiple();
   if (!files || files.length === 0) return 0;
@@ -555,14 +616,11 @@ async function uploadStickerPNGs() {
     store.stickerPoolIds.push(id);
     added++;
   }
-
   store.stickerDrawBag = [];
   ensureStickerBag();
-
   await saveStore();
   return added;
 }
-
 async function clearStickerPool() {
   const ids = store.stickerPoolIds || [];
   for (const id of ids) await imgDel(id);
@@ -570,10 +628,8 @@ async function clearStickerPool() {
   store.stickerPoolIds = [];
   store.stickerDrawBag = [];
   store.pinnedStickers = (store.pinnedStickers || []).filter(p => p && p.imageId && !ids.includes(p.imageId));
-
   await saveStore();
 }
-
 async function clearPinnedStickers() {
   store.pinnedStickers = [];
   await saveStore();
@@ -583,7 +639,11 @@ async function clearPinnedStickers() {
 function routineMeta(rid) {
   return ROUTINES.find(r => r.id === rid) || { icon: "✅", defaultTitle: rid };
 }
-
+function routineTitle(rid) {
+  const meta = routineMeta(rid);
+  const data = store.routines?.[rid];
+  return (data?.title || meta.defaultTitle);
+}
 function applyAutoReset(r) {
   if (!r.autoResetDaily) return false;
   const today = todayISO();
@@ -593,14 +653,12 @@ function applyAutoReset(r) {
   }
   return false;
 }
-
 async function imageUrlFromId(imageId) {
   if (!imageId) return null;
   const blob = await imgGet(imageId);
   if (!blob) return null;
   return URL.createObjectURL(blob);
 }
-
 function anyRoutineKidMode() {
   return Object.values(store.routines || {}).some(r => r?.kidMode);
 }
@@ -614,7 +672,6 @@ function blobToDataURL(blob) {
     fr.readAsDataURL(blob);
   });
 }
-
 function dataURLToBlob(dataURL) {
   const [meta, base64] = dataURL.split(",");
   const mime = (meta.match(/data:(.*?);base64/) || [])[1] || "application/octet-stream";
@@ -624,7 +681,6 @@ function dataURLToBlob(dataURL) {
   for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
   return new Blob([u8], { type: mime });
 }
-
 async function exportBackup() {
   const keys = await imgKeys();
   const images = {};
@@ -655,7 +711,6 @@ async function exportBackup() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 function pickJSONFile() {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -665,7 +720,6 @@ function pickJSONFile() {
     input.click();
   });
 }
-
 async function importBackupFlow() {
   const file = await pickJSONFile();
   if (!file) return;
@@ -748,7 +802,7 @@ async function renderPick() {
         <div class="hint">Sticker werden hier gesammelt.</div>
       `}
 
-      <div class="stickerGrid" id="pinnedGrid"></div>
+      <div class="stickerGroups" id="pinnedGroups"></div>
     </div>
 
     <p class="hint">
@@ -789,7 +843,6 @@ async function renderPick() {
   }
 
   // Sticker panel wiring
-  const pinnedGrid = $("pinnedGrid");
   const stickersTitle = $("stickersTitle");
 
   // Admin toggle for controls: Long-Press on title
@@ -799,21 +852,63 @@ async function renderPick() {
     await renderPick();
   });
 
-  async function drawPinned() {
-    pinnedGrid.innerHTML = "";
+  async function drawPinnedGrouped() {
+    const wrap = $("pinnedGroups");
+    wrap.innerHTML = "";
+
     const pins = store.pinnedStickers || [];
+    const byRid = new Map();
     for (const p of pins) {
-      const url = await imageUrlFromId(p.imageId);
-      const el = document.createElement("div");
-      el.className = "sticker";
-      el.title = `${p.routineId} • ${p.earnedAtIso?.slice(0,10) || ""}`;
-      el.innerHTML = url ? `<img alt="" />` : `<span>🖼️</span>`;
-      if (url) el.querySelector("img").src = url;
-      pinnedGrid.appendChild(el);
+      if (!p?.routineId) continue;
+      if (!byRid.has(p.routineId)) byRid.set(p.routineId, []);
+      byRid.get(p.routineId).push(p);
+    }
+
+    // show groups in ROUTINES order; unknown routineIds go last
+    const orderedRids = [
+      ...ROUTINES.map(r => r.id),
+      ...[...byRid.keys()].filter(rid => !ROUTINES.some(r => r.id === rid))
+    ];
+
+    for (const rid of orderedRids) {
+      const groupPins = byRid.get(rid) || [];
+      const meta = routineMeta(rid);
+
+      const group = document.createElement("div");
+      group.className = "stickerGroup";
+      group.innerHTML = `
+        <div class="stickerGroupHead">
+          <div class="ico">${meta.icon}</div>
+          <div>${escapeHtml(routineTitle(rid))}</div>
+        </div>
+        <div class="stickerGrid" id="grid_${rid}"></div>
+      `;
+      wrap.appendChild(group);
+
+      const g = group.querySelector(`#grid_${CSS.escape(rid)}`);
+      // ensure some space even if empty
+      g.style.minHeight = "74px";
+
+      // add stickers
+      for (const p of groupPins) {
+        const url = await imageUrlFromId(p.imageId);
+        const el = document.createElement("div");
+        el.className = "sticker";
+        el.title = `${p.earnedAtIso?.slice(0,10) || ""}`;
+        el.innerHTML = url ? `<img alt="" />` : `<span>🖼️</span>`;
+        if (url) el.querySelector("img").src = url;
+
+        // TAP: only big/small viewer
+        el.addEventListener("click", () => {
+          if (url) openStickerViewer(url, `${meta.icon} ${routineTitle(rid)}`);
+        });
+
+        g.appendChild(el);
+      }
     }
   }
 
-  await drawPinned();
+  await drawPinnedGrouped();
 
   if (showControls) {
     const poolCount = $("poolCount");
@@ -894,9 +989,8 @@ async function renderRoutine() {
     if (items.length === 0) return;
     if (done.size !== items.length) return;
 
-    // prevent multiple rewards for the same completion state
+    // already rewarded for this completion state
     if (r.progress.rewardGiven) {
-      // still show reward screen (without giving new sticker) when opening completed routine
       showRewardScreen({
         title: r.title || meta.defaultTitle,
         showAgain: !kid,
@@ -921,9 +1015,7 @@ async function renderRoutine() {
 
     if ((store.stickerPoolIds || []).length > 0) {
       stickerId = drawStickerIdNoRepeat();
-      if (stickerId) {
-        stickerUrl = await imageUrlFromId(stickerId);
-      }
+      if (stickerId) stickerUrl = await imageUrlFromId(stickerId);
     }
 
     showRewardScreen({
@@ -937,9 +1029,7 @@ async function renderRoutine() {
       },
       onContinue: async () => {
         // Pin AFTER showing big
-        if (stickerId) {
-          await addPinnedSticker(currentRid, stickerId);
-        }
+        if (stickerId) await addPinnedSticker(currentRid, stickerId);
         await renderPick();
       }
     });
@@ -985,7 +1075,6 @@ async function renderRoutine() {
           card.querySelector(".d").textContent = "Antippen zum Bestätigen";
           card.querySelector(".check").textContent = "";
 
-          // undo means reward can be re-earned later
           r.progress = { lastDateIso: todayISO(), doneIds: [...done], rewardGiven: false };
           await saveStore();
 
@@ -1171,11 +1260,9 @@ backBtn.onclick = () => {
   if (view === "routine") renderPick();
   else if (view === "edit") renderPick();
 };
-
 editBtn.onclick = () => {
   if (view === "routine") renderEdit();
 };
-
 resetBtn.onclick = async () => {
   if (view !== "routine") return;
   const r = store.routines[currentRid];
@@ -1185,13 +1272,10 @@ resetBtn.onclick = async () => {
 };
 
 exportBtn.onclick = async () => {
-  try { await exportBackup(); }
-  catch (e) { console.error(e); alert("Export fehlgeschlagen."); }
+  try { await exportBackup(); } catch (e) { console.error(e); alert("Export fehlgeschlagen."); }
 };
-
 importBtn.onclick = async () => {
-  try { await importBackupFlow(); }
-  catch (e) { console.error(e); alert("Import fehlgeschlagen."); }
+  try { await importBackupFlow(); } catch (e) { console.error(e); alert("Import fehlgeschlagen."); }
 };
 
 // ---------- File picking ----------
@@ -1250,7 +1334,7 @@ function escapeAttr(s){ return escapeHtml(s).replaceAll("\n"," "); }
   db = await openDB();
   store = await loadStore();
 
-  // If any routine uses kid mode, default to hidden admin sticker controls
+  // if any routine uses kid mode, default to hidden admin sticker controls
   if (anyRoutineKidMode() && typeof store.settings.adminStickerControls !== "boolean") {
     store.settings.adminStickerControls = false;
   }
