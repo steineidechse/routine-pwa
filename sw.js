@@ -1,5 +1,5 @@
 // sw.js — komplett ersetzen
-const CACHE = "routinepwa-v4";
+const CACHE = "routinepwa-v5";
 
 const ASSETS = [
   "./",
